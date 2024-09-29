@@ -1,0 +1,704 @@
+---
+title: "Evaluating Critical Thinking of LLM"
+output: html_document
+date: "2024-08-01"
+---
+
+```{r required packages}
+
+library(openxlsx)
+library(psych)
+library(mirt)
+library(irr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(gridExtra)
+library(emmeans)
+
+```
+
+```{r demographic info}
+
+demo <- read.xlsx("demographic.xlsx")
+
+table(demo$gender)
+table(demo$age)
+mean(demo$age)
+
+```
+
+```{r TSA reliability}
+
+ALL_TSA <- read.xlsx("TSA_all.xlsx")
+TSAhuman <- ALL_TSA %>% filter(group == "Human")
+
+cor_table <- cor(TSAhuman[,1:70], TSAhuman$total_TSA, use = "pairwise.complete.obs")
+cor_table <- round(cor_table, 2)
+View(cor_table)
+
+omega(TSAhuman[,1:70])
+
+cor(TSAhuman$total_TSAorg, TSAhuman$total_TSAnew, use = "pairwise.complete.obs")
+
+```
+
+```{r TSA GPT temperature}
+
+# GPT-3.5
+
+ALL_TSA <- read.xlsx("TSA_all.xlsx")
+GPT3.5_TSA <- ALL_TSA %>% filter(group == "GPT-3.5")
+
+summary_table <- GPT3.5_TSA %>%
+  group_by(temperature) %>%
+  summarise(
+    Mean_totalscore = round(mean(total_TSA),2),
+    SD_totalscore = round(sd(total_TSA),2),
+    Max_totalscore = round(max(total_TSA),2),
+    Min_totalscore = round(min(total_TSA),2)
+  )
+View(summary_table)
+
+GPT3.5_TSA$temperature <- factor(GPT3.5_TSA$temperature)
+anova_result <- aov(total_TSA ~ temperature, data = GPT3.5_TSA)
+summary(anova_result)
+
+
+# GPT-4
+
+ALL_TSA <- read.xlsx("TSA_all.xlsx")
+GPT4_TSA <- ALL_TSA %>% filter(group == "GPT-4")
+
+summary_table <- GPT4_TSA %>%
+  group_by(temperature) %>%
+  summarise(
+    Mean_totalscore = mean(total_TSA),
+    SD_totalscore = sd(total_TSA),
+    Max_totalscore = max(total_TSA),
+    Min_totalscore = min(total_TSA)
+  )
+View(summary_table)
+
+# plot - different temperature
+
+data1 <- data.frame(
+  temperature = c(0, 0.25, 0.5, 0.75, 1, 0, 0.25, 0.5, 0.75, 1),
+  model = c(rep("GPT-3.5", 5), rep("GPT-4", 5)),
+  value = c(33.87, 33.8, 33.87, 33.77, 33.5, 59.43, 59.43, 59.43, 59.43, 59.43),
+  max_value = c(34, 35, 37, 36, 36, 61, 61, 61, 61, 61),
+  min_value= c(33, 32, 32, 32, 31, 58, 58, 58, 58, 58)
+)
+
+p1_temperature <- ggplot(data1, aes(x = temperature, y = value, group = model, color = model, fill = model)) +
+  geom_line(linewidth = 1.2) +  
+  geom_point(size = 3) +  
+  geom_ribbon(aes(ymin = min_value, ymax = max_value), alpha = 0.2, color = NA) + 
+  scale_x_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1)) + 
+  scale_y_continuous(limits = c(0, 65), breaks = seq(0, 65, 10)) + 
+  labs(title = "",
+       x = "Temperature",
+       y = "Total Score") +
+  theme_minimal() +
+  scale_color_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange")) +  
+  scale_fill_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange")) +  
+  theme(
+   axis.line = element_line(color = "black")  # Add axes lines
+  )
+
+p1_temperature
+
+```
+
+```{r TSA T-test}
+
+ALL_TSA <- read.xlsx("TSA_all.xlsx")
+
+summary_table <- ALL_TSA %>%
+  group_by(group) %>%
+  summarise(
+    Mean_totalscore = mean(total_TSA),
+    SD_totalscore = sd(total_TSA),
+    Max_totalscore = max(total_TSA),
+    Min_totalscore = min(total_TSA),
+  )
+print(summary_table)
+
+# T-test
+human_group <- ALL_TSA$total_TSA[ALL_TSA$group == "Human"]
+gpt4_group <- ALL_TSA$total_TSA[ALL_TSA$group == "GPT-4"]
+gpt3.5_group <- ALL_TSA$total_TSA[ALL_TSA$group == "GPT-3.5"]
+
+t_test_result <- t.test(human_group, gpt3.5_group)
+print(t_test_result)
+
+t_test_result <- t.test(human_group, gpt4_group)
+print(t_test_result)
+
+p_TSA <- ggplot(ALL_TSA, aes(x = group, y = total_TSA, color = group)) +
+  geom_boxplot(fill = NA, outlier.shape = NA) + 
+  geom_jitter(alpha = 0.5, position = position_jitter(width = 0.2)) + 
+  labs(x = "Group", y = "Total Score of TSA") +
+  theme_minimal() +
+  scale_color_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange", "Human" = "#778899")) +
+  scale_y_continuous(breaks = seq(from = 20, to = 70, by = 10), limits = c(20, 70))  +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.5, linetype = "solid"), 
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),  
+    panel.background = element_rect(fill = "white", colour = "white"), 
+    axis.ticks = element_line(color = "black")
+  )
+
+p_TSA
+
+```
+
+```{r TSA items}
+
+mean_data <- ALL_TSA %>% 
+  group_by(group) %>% 
+  summarise(across(1:70, ~ mean(., na.rm = TRUE)))
+
+long_data <- pivot_longer(mean_data, cols = -group, names_to = "variable", values_to = "mean")
+
+sorted_vars <- long_data %>% 
+  filter(group == "Human") %>% 
+  arrange(desc(mean)) %>% 
+  pull(variable)
+
+long_data <- long_data %>% 
+  mutate(variable = factor(variable, levels = sorted_vars))
+
+p_TSA_items <- ggplot(long_data, aes(x = variable, y = mean, color = group, group = group)) +
+  geom_line(size = 1) +  
+  theme_minimal() +
+  labs(x = "Items", y = "Accuracy (%)", title = "") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid = element_blank(),
+    axis.line.y = element_line(color = "black"),
+    legend.position = "none" 
+  ) +
+  scale_color_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange", "Human" = "#778899"))  
+
+p_TSA_items
+
+```
+
+```{r TSA dimensions}
+
+ALL_TSA <- ALL_TSA %>%
+  rowwise() %>%
+  mutate(
+    main = mean(c_across(c(paste0("T", 1:5), paste0("S", 1:5))), na.rm = TRUE),
+    assumption = mean(c_across(c(paste0("T", 11:15), paste0("S", 6:10))), na.rm = TRUE),
+    additional = mean(c_across(c(paste0("T", 16:20), paste0("S", 11:15))), na.rm = TRUE),
+    error = mean(c_across(c(paste0("T", 21:25), paste0("S", 16:20))), na.rm = TRUE),
+    draw = mean(c_across(c(paste0("T", 6:10), paste0("S", 21:25))), na.rm = TRUE),
+    argument = mean(c_across(c(paste0("T", 26:30), paste0("S", 26:30))), na.rm = TRUE),
+    principle = mean(c_across(c(paste0("T", 31:35), paste0("S", 31:35))), na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+summary_table <- ALL_TSA %>%
+  group_by(group) %>%
+  summarise(
+    Main = round(100 * mean(main), 2),
+    Assumption = round(100 * mean(assumption), 2),
+    Additional = round(100 * mean(additional), 2),
+    Error = round(100 * mean(error), 2),
+    Draw = round(100 * mean(draw), 2),
+    Argument = round(100 * mean(argument), 2),
+    Principle = round(100 * mean(principle), 2)
+  )
+View(summary_table)
+
+long_summary_table <- summary_table %>%
+  pivot_longer(
+    cols = -group,
+    names_to = "Dimension",
+    values_to = "Accuracy"
+  ) %>%
+  mutate(Dimension = factor(Dimension, levels = c("Main", "Assumption", "Additional", "Error", "Draw", "Argument", "Principle")))
+
+colors <- c("GPT-3.5" = "skyblue", "GPT-4" = "orange", "Human" = "#778899")
+
+P_TSA_dim <- ggplot(long_summary_table, aes(x = Dimension, y = Accuracy, fill = group)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  labs(x = "Dimension",
+       y = "Accuracy (%)",
+       fill = "Group") +
+  scale_fill_manual(values = colors) +
+  scale_x_discrete(labels = c(
+    "Main Conclusion",
+    "Identifying an Assumption",
+    "Additional Evidence",
+    "Reasoning Errors",
+    "Drawing a Conclusion",
+    "Matching Arguments",
+    "Applying Principles"
+  )) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+P_TSA_dim
+
+```
+
+```{r EW ICC and reliabitliy}
+
+EW_all <- read.xlsx('EW_all.xlsx')
+
+# ICC-original
+
+EW_icc <- EW_all[,c("P1.1","P1.2","P1.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single") # 0.913
+
+EW_icc <- EW_all[,c("P2.1","P2.2","P2.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single") # 0.969
+
+EW_icc <- EW_all[,c("P3.1","P3.2","P3.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single") # 0.952
+
+EW_icc <- EW_all[,c("P4.1","P4.2","P4.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single") # 0.928
+
+EW_icc <- EW_all[,c("P5.1","P5.2","P5.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single")# 0.944
+
+EW_icc <- EW_all[,c("P6.1","P6.2","P6.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single")# 0.965
+
+EW_icc <- EW_all[,c("P7.1","P7.2","P7.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single")# 0.964
+
+EW_icc <- EW_all[,c("P8.1","P8.2","P8.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single")# 0.806
+
+EW_icc <- EW_all[,c("P9.1","P9.2","P9.3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single")# 0.891
+
+# ICC-new
+
+df_icc <- EW_all[,c("point1_rater1","point1_rater2","point1_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.883
+
+df_icc <- EW_all[,c("point2_rater1","point2_rater2","point2_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.938
+
+df_icc <- EW_all[,c("point3_rater1","point3_rater2","point3_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.713
+
+df_icc <- EW_all[,c("point4_rater1","point4_rater2","point4_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.957
+
+df_icc <- EW_all[,c("point5_rater1","point5_rater2","point5_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.846
+
+df_icc <- EW_all[,c("point6_rater1","point6_rater2","point6_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.969
+
+df_icc <- EW_all[,c("point7_rater1","point7_rater2","point7_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.920
+
+df_icc <- EW_all[,c("point8_rater1","point8_rater2","point8_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.855
+
+df_icc <- EW_all[,c("point9_rater1","point9_rater2","point9_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.869
+
+df_icc <- EW_all[,c("point10_rater1","point10_rater2","point10_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.759
+
+df_icc <- EW_all[,c("point11_rater1","point11_rater2","point11_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.946
+
+df_icc <- EW_all[,c("point12_rater1","point12_rater2","point12_rater3")]
+icc(df_icc, model = "oneway", type = "agreement", unit = "single") # 0.738
+
+EW_all$total_rater1 <- EW_all$EWoriginal_rater1 + EW_all$EWnew_rater1
+EW_all$total_rater2 <- EW_all$EWoriginal_rater2 + EW_all$EWnew_rater2
+EW_all$total_rater3 <- EW_all$EWoriginal_rater3 + EW_all$EWnew_rater3
+
+EW_icc <- EW_all[,c("total_rater1","total_rater2","total_rater3")]
+icc(EW_icc, model = "oneway", type = "agreement", unit = "single") # 0.969
+
+
+# reliability
+
+EW_human <- EW_all %>% filter(group == "Human")
+
+cor(EW_human$total_EWorg, EW_human$total_EWnew) 
+
+EW_human <- EW_human[,c("P1_P","P2_P","P3_P","P4_P","P5_P","P6_P","P7_P","P8_P","P9_P", "point1_P","point2_P","point3_P",'point4_P',"point5_P","point6_P","point7_P","point8_P","point9_P",'point10_P','point11_P','point12_P','total_EW','ID')]
+
+cor_table <- cor(EW_human[, 1:21], EW_human$total_EW, use = "pairwise.complete.obs")
+cor_table <- round(cor_table, 3)
+View(cor_table)
+
+omega(EW_human[, 1:21]) # 0.66
+
+```
+
+```{r EW T-test}
+
+EW_all$total_EW <- EW_all$total_EWorg + EW_all$total_EWnew
+EW_all$discredit <- EW_all$discredit_org + EW_all$discredit_new
+
+EW_all <- EW_all[,c("P1_P","P2_P","P3_P","P4_P","P5_P","P6_P","P7_P","P8_P","P9_P", "point1_P","point2_P","point3_P",'point4_P',"point5_P","point6_P","point7_P","point8_P","point9_P",'point10_P','point11_P','point12_P','total_EW','discredit','temperature','group','ID')]
+
+statistics <- EW_all %>%
+  group_by(group) %>%
+  summarise(mean = round(mean(total_EW),2),
+            sd = round(sd(total_EW),2),
+            max = round(max(total_EW),2),
+            min = round(min(total_EW),2))
+View(statistics)
+
+# TTest
+human_group <- EW_all$total_EW[EW_all$group == "Human"]
+gpt4_group <- EW_all$total_EW[EW_all$group == "GPT-4"]
+gpt3.5_group <- EW_all$total_EW[EW_all$group == "GPT-3.5"]
+
+t_test_result <- t.test(human_group, gpt3.5_group)
+print(t_test_result)
+
+t_test_result <- t.test(human_group, gpt4_group)
+print(t_test_result)
+
+
+statistics <- EW_all %>%
+  group_by(group) %>%
+  summarise(mean = round(mean(discredit),2),
+            sd = round(sd(discredit),2),
+            max = round(max(discredit),2),
+            min = round(min(discredit),2))
+View(statistics)
+
+human_group <- EW_all$discredit[EW_all$group == "Human"]
+gpt4_group <- EW_all$discredit[EW_all$group == "GPT-4"]
+gpt3.5_group <- EW_all$discredit[EW_all$group == "GPT-3.5"]
+
+t_test_result <- t.test(human_group, gpt3.5_group)
+print(t_test_result)
+
+t_test_result <- t.test(human_group, gpt4_group)
+print(t_test_result)
+
+
+p_EW <- ggplot(EW_all, aes(x = group, y = total_EW, color = group)) +
+  geom_boxplot(fill = NA, outlier.shape = NA) +  
+  geom_jitter(alpha = 0.5, position = position_jitter(width = 0.2)) + 
+  labs(x = "", y = "Total Score of EWCTET") +
+  theme_minimal() +
+  scale_color_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange", "Human" = "#778899")) +
+    scale_y_continuous(breaks = seq(from = 0, to = 60, by = 10), limits = c(0, 60))  +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.5, linetype = "solid"), 
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.background = element_rect(fill = "white", colour = "white"), 
+    axis.ticks = element_line(color = "black") 
+  )
+
+p_EW
+
+grid.arrange(p_TSA,p_EW,ncol=2)
+
+
+```
+
+```{r EW GPT temperature}
+
+## GPT-3.5
+
+EW_chat = as.data.frame(EW_all[EW_all['group'] == 'GPT-3.5', ])
+
+statistics_chat <- EW_chat %>%
+  group_by(temperature) %>%
+  summarise(mean = round(mean(total_EW),2),
+            sd = round(sd(total_EW),2),
+            max = round(max(total_EW),2),
+            min = round(min(total_EW),2))
+
+View(statistics_chat)
+
+EW_chat$temperature <- factor(EW_chat$temperature)
+anova_result <- aov(total_EW ~ temperature, data = EW_chat)
+summary(anova_result)
+
+
+## GPT4 
+
+EW_gpt4 = as.data.frame(EW_all[EW_all['group'] == 'GPT-4', ])
+
+statistics_gpt4 <- EW_gpt4 %>%
+  group_by(temperature) %>%
+  summarise(mean = round(mean(total_EW),2),
+            sd = round(sd(total_EW),2),
+            max = round(max(total_EW),2),
+            min = round(min(total_EW),2))
+
+View(statistics_gpt4)
+
+EW_gpt4$temperature <- factor(EW_gpt4$temperature)
+anova_result <- aov(total_EW ~ temperature, data = EW_gpt4)
+summary(anova_result)
+
+trend_model <- emmeans(anova_result, "temperature", contr = "poly")
+summary(trend_model)
+
+
+data2 <- data.frame(
+  temperature = c(0, 0.25, 0.5, 0.75, 1, 0, 0.25, 0.5, 0.75, 1),
+  model = c(rep("GPT-3.5", 5), rep("GPT-4", 5)),
+  value = c(22.07, 22.64,23.06,23.18,24.02,31.93,35.32,34.14,34.94,34.59),
+  max_value = c(29,32,34.67,36.67,38.33,39.67,43,42.67,44.33,42),
+  min_value= c(15.33,15,14.67,14.33,13.33,27.33,26.33,26,25.33,26.67)
+)
+
+p2_temperature <- ggplot(data2, aes(x = temperature, y = value, group = model, color = model, fill = model)) +
+  geom_line(size = 1.2) + 
+  geom_point(size = 3) + 
+  geom_ribbon(aes(ymin = min_value, ymax = max_value), alpha = 0.2, color = NA) + 
+  scale_x_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1)) +  
+  scale_y_continuous(limits = c(0, 65), breaks = seq(0, 65, 10)) +  
+  labs(title = "",
+       x = "Temperature",
+       y = "Total Score") +
+theme_minimal() +
+  scale_color_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange")) +  
+  scale_fill_manual(values = c("GPT-3.5" = "skyblue", "GPT-4" = "orange")) +  
+  theme(
+    axis.line = element_line(color = "black") 
+  )
+
+p2_temperature
+
+grid.arrange(p1_temperature,p2_temperature,ncol=2)
+
+```
+
+```{r EW paragraph}
+
+selected_columns <- c("P1_P", "P2_P", "P3_P", "P4_P", "P5_P", "P6_P", "P7_P", "P8_P", "P9_P")
+
+result_table <- EW_all %>%
+  group_by(group) %>%
+  summarise(across(all_of(selected_columns), list(mean = ~round(mean(.) * 100, 1)))) %>%
+  pivot_longer(cols = ends_with("_mean"), names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = str_replace(Variable, "_mean", "")) %>%
+  mutate(Item = factor(Variable, levels = c("P1_P", "P2_P", "P3_P", "P4_P", "P5_P", "P6_P", "P7_P", "P8_P", "P9_P"),
+  labels = c("S1_P1", "S1_P2", "S1_P3", "S1_P4", "S1_P5", "S1_P6", "S1_P7", "S1_P8", "S1_P9")))
+
+colors <- c("GPT-3.5" = "skyblue","GPT-4" = "orange","Human" = "#778899")
+result_table$group <- factor(result_table$group, levels = c("GPT-3.5","GPT-4","Human"))
+
+p_paragraph_s1 <- ggplot(result_table, aes(x = Value, y = Item, fill = group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  labs(x = "Accuracy (%)", y = "", fill = "Group") +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid = element_blank(),  
+    axis.line.x = element_line(color = "black"), 
+    axis.line.y = element_line(color = "black")  
+  ) +
+  scale_x_continuous(expand = c(0, 0))    # Ensures the axis line starts at the base of the bars
+
+print(p_paragraph_s1)
+
+
+
+selected_columns <- c("point1_P", "point2_P", "point3_P", "point4_P", "point5_P", "point6_P", "point7_P", "point8_P", "point9_P", "point10_P", "point11_P", "point12_P")
+                       
+  result_table <- EW_all %>%
+  group_by(group) %>%
+  summarise(across(all_of(selected_columns), list(mean = ~round(mean(.) * 100, 1)))) %>%
+  pivot_longer(cols = ends_with("_mean"), names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = str_replace(Variable, "_mean", "")) %>%
+  mutate(Item = factor(Variable, levels = c("point1_P", "point2_P", "point3_P", "point4_P", "point5_P", "point6_P", "point7_P", "point8_P", "point9_P", "point10_P", "point11_P", "point12_P"),
+ labels = c( "S2_P1_F1", "S2_P1_F2", "S2_P2", "S2_P3_F1", "S2_P3_F2", "S3_P1_F1", "S3_P1_F2","S3_P2", "S3_P3", "S4_P1", "S4_P2", "S4_P3")))
+
+colors <- c("GPT-3.5" = "skyblue","GPT-4" = "orange","Human" = "#778899")
+
+result_table$group <- factor(result_table$group, levels = c("Human","GPT-4", "GPT-3.5"))
+
+p_paragraph_s2_s3 <- ggplot(result_table, aes(x = Value, y = Item, fill = group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  labs(x = "Accuracy (%)", y = "", fill = "Group") +
+  coord_flip() +  # Rotate the chart to make it horizontal
+  guides(fill = "none") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid = element_blank(),      
+    axis.line.x = element_line(color = "black"), 
+    axis.line.y = element_line(color = "black")  
+  ) +
+  scale_x_continuous(expand = c(0, 0))    # Ensures the axis line starts at the base of the bars
+
+print(p_paragraph_s2_s3)
+
+```
+
+```{r EW item}
+
+selected_columns <- c("P1_P", "P2_P", "P3_P", "P4_P", "P5_P", "P6_P", "P7_P", "P8_P", "P9_P", "point1_P", "point2_P", "point3_P", "point4_P", "point5_P", "point6_P", "point7_P", "point8_P", "point9_P", "point10_P", "point11_P", "point12_P")
+                       
+result_table <- EW_all %>%
+  group_by(group) %>%
+  summarise(across(all_of(selected_columns), list(mean = ~round(mean(.) * 100, 1)))) %>%
+  pivot_longer(cols = ends_with("_mean"), names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = str_replace(Variable, "_mean", "")) %>%
+  mutate(Item = factor(Variable, levels = c("P1_P", "P2_P", "P3_P", "P4_P", "P5_P", "P6_P", "P7_P", "P8_P", "P9_P", "point1_P", "point2_P", "point3_P", "point4_P", "point5_P", "point6_P", "point7_P", "point8_P", "point9_P", "point10_P", "point11_P", "point12_P"),
+                        labels = c("S1_P1", "S1_P2", "S1_P3", "S1_P4", "S1_P5", "S1_P6", "S1_P7", "S1_P8", "S1_P9", "S2_P1_F1", "S2_P1_F2", "S2_P2", "S2_P3_F1", "S2_P3_F2", "S3_P1_F1", "S3_P1_F2", "S3_P2", "S3_P3", "S4_P1", "S4_P2", "S4_P3")))
+
+colors <- c("GPT-3.5" = "skyblue","GPT-4" = "orange","Human" = "#778899")
+
+result_table$group <- factor(result_table$group, levels = c("Human","GPT-4", "GPT-3.5"))
+
+human_order <- result_table %>%
+  filter(group == "Human") %>%
+  arrange(desc(Value)) %>%  
+  pull(Item)
+
+
+result_table$Item <- factor(result_table$Item, levels = human_order)
+result_table$group <- factor(result_table$group, levels = c("GPT-3.5", "GPT-4", "Human"))
+
+p_EW_item <- ggplot(result_table, aes(x = Item, y = Value, color = group, group = group)) +
+  geom_line(size = 1, linetype = "solid") + # Set the line type directly
+  geom_point(size = 1) +
+  scale_color_manual(values = colors) +
+  theme_minimal() +
+  labs(x = "", y = "Accuracy (%)", color = "Group") +
+   theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid = element_blank(),
+    axis.line.y = element_line(color = "black")  
+  )
+
+print(p_EW_item)
+
+ 
+```
+
+```{r clustering}
+
+for_clustering <- read.xlsx('for_clustering.xlsx')
+
+for_clustering$sc1 <- (for_clustering$p1_P + for_clustering$p2_P + for_clustering$p3_P + for_clustering$p4_P + for_clustering$p5_P + for_clustering$p6_P+ for_clustering$p7_P + for_clustering$p8_P + for_clustering$p9_P ) / 9
+
+for_clustering$sc2 <- (for_clustering$point1_P + for_clustering$point2_P + for_clustering$point3_P + for_clustering$point4_P + for_clustering$point5_P) / 5
+
+for_clustering$sc3 <- (for_clustering$point6_P + for_clustering$point7_P + for_clustering$point8_P + for_clustering$point9_P) / 4
+
+for_clustering$sc4 <- (for_clustering$point10_P + for_clustering$point11_P + for_clustering$point12_P) / 3
+
+
+for_clustering <- for_clustering %>%
+  rowwise() %>%
+  mutate(
+    main = mean(c_across(c(paste0("T", 1:5), paste0("S", 1:5))), na.rm = TRUE),
+    assumption = mean(c_across(c(paste0("T", 11:15), paste0("S", 6:10))), na.rm = TRUE),
+    evidence = mean(c_across(c(paste0("T", 16:20), paste0("S", 11:15))), na.rm = TRUE),
+    error = mean(c_across(c(paste0("T", 21:25), paste0("S", 16:20))), na.rm = TRUE),
+    draw = mean(c_across(c(paste0("T", 6:10), paste0("S", 21:25))), na.rm = TRUE),
+    argument = mean(c_across(c(paste0("T", 26:30), paste0("S", 26:30))), na.rm = TRUE),
+    principle = mean(c_across(c(paste0("T", 31:35), paste0("S", 31:35))), na.rm = TRUE),
+    scenario1 = sc1,
+    scenario2 = sc2,
+    scenario3 = sc3,
+    scenario4 = sc4) %>%
+  ungroup()
+
+clustering_human <- for_clustering[1:194,]
+
+hcdata <- clustering_human[,c("main","assumption","evidence","error","draw","argument","principle","scenario1","scenario2","scenario3","scenario4")]
+hc <- hclust(dist(hcdata))
+
+plot(hc, labels=clustering_human$group, main=" ", xlab="Participants", sub="",cex=0.5)
+
+clusters <- cutree(hc, k=4)
+cluster_counts <- table(clusters)
+print(cluster_counts)
+
+means_by_cluster <- aggregate(hcdata, by=list(Cluster=clusters), FUN=mean)
+means_by_cluster_rounded <- means_by_cluster
+means_by_cluster_rounded[-1] <- round(means_by_cluster_rounded[-1], 2)
+
+long_data <- pivot_longer(
+  means_by_cluster_rounded,
+  cols = -Cluster,
+  names_to = "Variable", 
+  values_to = "Mean"
+)
+
+ordered_variables <- c("main","assumption","evidence","error","draw","argument","principle","scenario1","scenario2","scenario3","scenario4")
+
+long_data$Variable <- factor(long_data$Variable, levels = ordered_variables)
+
+p_clustering <- ggplot(long_data, aes(x = Variable, y = Mean, group = Cluster, color = as.factor(Cluster))) +
+  geom_line(linewidth=1.2) +
+  geom_point() +  
+  theme_minimal() +  
+  labs(title = "", x = " ", y = "Accuracy", color = "Cluster") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size =8)) + 
+  scale_x_discrete(limits = ordered_variables)
+
+
+additional_data <- for_clustering[195:196, c("main","assumption","evidence","error","draw","argument","principle","scenario1","scenario2","scenario3","scenario4")]
+
+additional_data_long <- pivot_longer(
+  data.frame(ID = 195:196, additional_data),
+  cols = -ID,
+  names_to = "Variable", 
+  values_to = "Value"
+)
+
+p_clustering_new$Variable <- factor(additional_data_long$Variable, levels = ordered_variables)
+
+p_clustering_new <- p_clustering + 
+  geom_line(data = additional_data_long, aes(x = Variable, y = Value, group = ID, color = as.factor(ID)), linetype = "11", size = 1.2) +
+  geom_point(data = additional_data_long, aes(x = Variable, y = Value, group = ID, color = as.factor(ID))) +
+  scale_color_manual(
+    values = c("#D8BFD8", "#FFB6C1", "#FFA07A", "#FFDEAD", "#00BFFF", "#32CD32"),  # Specify colors; adjust as needed
+    breaks = c("1", "2", "3", "4", "195", "196"),  # Specify legend order
+    labels = c("C1 (n=29)", "C2 (n=57)", "C3 (n=94)", "C4 (n=14)", "GPT-3.5", "GPT-4")
+  ) +
+  scale_x_discrete(labels = c(
+    "Main Conclusion",
+    "Identifying an Assumption",
+    "Additional Evidence",
+    "Reasoning Errors",
+    "Drawing a Conclusion",
+    "Matching Arguments",
+    "Applying Principles",
+    "Scenario1", "Scenario2", "Scenario3", "Scenario4"
+  ))
+
+p_clustering_new
+
+
+# involve GPT in clustering
+
+hcdata <- for_clustering[,c("main","assumption","evidence","error","draw","argument","principle","scenario1","scenario2","scenario3","scenario4")]
+hc <- hclust(dist(hcdata))
+
+plot(hc, labels=for_clustering$group, main=" ", xlab="Participants", sub="",cex=0.5)
+
+clusters <- cutree(hc, k=4)
+cluster_counts <- table(clusters)
+print(cluster_counts)
+
+participant_clusters <- data.frame(ID = for_clustering$ID, Cluster = clusters)
+print(participant_clusters)
+
+
+```
